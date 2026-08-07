@@ -115,6 +115,58 @@ Defaults are placeholders. Replace every one with your broker's actual
 numbers before drawing conclusions — broker credit rates in particular vary by
 an order of magnitude and are usually tiered by balance.
 
+## Screening: which option to sell
+
+`screen.py` ranks candidate contracts and returns the best, or `None` when
+nothing qualifies.
+
+```python
+from options_desk import Candidate, Option, PUT, best, render_screen, score_candidates
+
+candidates = [Candidate(option=Option(spot=100, strike=92, dte=30, volatility=0.31,
+                                      kind=PUT),
+                        bid=0.71, ask=0.74, open_interest=1800, volume=260)]
+print(render_screen(score_candidates(candidates, realized_vol=22.0)))
+```
+
+The ranking is **not** a premium sort. The central quantity is:
+
+```
+edge = credit_received − BlackScholes_price(realized_vol)
+```
+
+You collect premium priced at *implied* vol and bear risk that plays out at
+*realized* vol; the difference is the variance risk premium captured on that
+specific contract. Sorting on raw yield instead puts the richest-looking
+contract on top exactly when the market has correctly identified a dangerous
+name.
+
+Five weighted components, all exposed in `DEFAULT_WEIGHTS` because the
+ranking is only as defensible as they are: `edge` (0.35), `probability`
+(0.20), `liquidity` (0.20), `technical` (0.15), `vol_context` (0.10).
+
+Hard filters run before scoring — spread, open interest, delta, DTE bounds,
+minimum credit, and positive edge. These are disqualifiers, not penalties: a
+contract that cannot be exited is not a worse trade, it is one that should
+not be on the list. In testing on a sample chain, the filters correctly
+excluded the *highest-IV* contract because its spread was 20% of mid.
+
+Two limits, stated in the module and in the rendered output:
+
+- **Realized vol is backward-looking.** The edge calculation assumes
+  volatility persists. It usually does, but it breaks around earnings and
+  other scheduled events — in the dangerous direction.
+- **A ranking is not a recommendation.** The weights are judgment calls. Two
+  reasonable desks would weight these differently and pick different winners.
+
+Credits are taken at the **bid** by default, not the mid. Mid fills are not
+guaranteed, and pricing at mid overstates every edge the screen finds — worst
+on exactly the illiquid contracts it should be avoiding.
+
+`best()` returns `None` when nothing passes. That is a real answer: a screen
+that always returns something will hand you a trade on the day when nothing
+is worth doing.
+
 ## Scope
 
 This is a technical and cash-management layer, not a signal generator or a
